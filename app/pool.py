@@ -47,6 +47,11 @@ def _consume_task_exception(task: asyncio.Task) -> None:
 class PoolConfig:
     dsn: dict
     size: int = 4
+    # 只读池（本 API 的查询端点）保持会话级只读；写池用于调价流水与分区维护。
+    read_only: bool = True
+    application_name: str = "ro-api"
+    # 额外的会话级参数，如 "-c TimeZone=UTC"；与只读设置合并。
+    server_options: str = ""
     connect_timeout: float = 5.0
     startup_retries: int = 60      # 启动时等待数据库就绪的重试次数
     retry_interval: float = 1.0
@@ -305,13 +310,17 @@ class AsyncPool:
             self._opened -= 1
 
     async def _connect(self) -> psycopg.AsyncConnection:
+        read_only = "on" if self.cfg.read_only else "off"
+        options = f"-c default_transaction_read_only={read_only}"
+        if self.cfg.server_options:
+            options = f"{options} {self.cfg.server_options}"
         conn = await psycopg.AsyncConnection.connect(
             **self.cfg.dsn,
             autocommit=True,
-            application_name="ro-api",
+            application_name=self.cfg.application_name,
             connect_timeout=int(self.cfg.connect_timeout),
-            # 会话级只读：本 API 是只读查询服务
-            options="-c default_transaction_read_only=on",
+            # 会话级只读：查询池只跑固定 SELECT；写池显式关闭只读。
+            options=options,
         )
         self._opened += 1
         return conn

@@ -6,7 +6,10 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: demo
     volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      # 先灌 items 种子数据，再建调价流水父表（schema.sql 里 item_id 外键
+      # 引用 items）。API 启动时会再次执行 schema.sql 兜底，两种启动顺序都安全。
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-items.sql:ro
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d demo"]
       interval: 2s
@@ -16,7 +19,9 @@ services:
       - "5432:5432"
 
   api:
-    build: ./app
+    build:
+      context: .
+      dockerfile: app/Dockerfile
     environment:
       PGHOST: db
       PGPORT: "5432"
@@ -24,6 +29,7 @@ services:
       PGUSER: app
       PGPASSWORD: app
       POOL_SIZE: "4"
+      WRITE_POOL_SIZE: "2"
     depends_on:
       db:
         condition: service_healthy
